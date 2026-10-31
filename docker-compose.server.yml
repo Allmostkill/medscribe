@@ -1,0 +1,32 @@
+# Серверный режим: HTTPS на своём домене через Caddy (сертификат он получает сам).
+# Включается в .env: COMPOSE_FILE="docker-compose.yml:docker-compose.server.yml"
+# Нужны переменные MEDSCRIBE_DOMAIN и ACME_EMAIL (их записывает scripts/install-server.sh).
+services:
+  caddy:
+    image: ghcr.io/allmostkill/medscribe-caddy:2.11.6-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      MEDSCRIBE_DOMAIN: "${MEDSCRIBE_DOMAIN:?Задайте MEDSCRIBE_DOMAIN в .env}"
+      ACME_EMAIL: "${ACME_EMAIL:?Задайте ACME_EMAIL в .env}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - default
+    depends_on:
+      - app
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  caddy-data: {}
+  caddy-config: {}

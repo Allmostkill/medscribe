@@ -1,0 +1,59 @@
+MedScribe от MagaMED / MedScribe by MagaMED
+
+Copyright 2026 Magomed Ilyasov (Магомед Ильясов)
+
+ENGLISH
+
+The source code of MedScribe is licensed under the GNU Affero General Public
+License, version 3 or (at your option) any later version (AGPL-3.0-or-later).
+See the LICENSE file.
+
+The MagaMED name and logo are not licensed under the AGPL. Forks and modified
+versions must remove or replace them.
+
+Third-party components:
+- T-one speech recognition model: Apache-2.0, T-Bank (voicekit-team/T-one),
+  https://github.com/voicekit-team/T-one
+- sherpa-onnx (speaker diarization runtime): Apache-2.0, k2-fsa,
+  https://github.com/k2-fsa/sherpa-onnx
+- pyannote segmentation-3.0 (ONNX model): MIT, © 2022 CNRS,
+  https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-segmentation-models;
+  license text is shipped in the tone image at /opt/diar/LICENSE-pyannote-segmentation-3.0
+- 3D-Speaker CAM++ VoxCeleb (speaker embedding model): Apache-2.0, ModelScope/3D-Speaker,
+  https://github.com/modelscope/3D-Speaker
+- GigaAM v3 (speech recognition model, v3_e2e_ctc): MIT, © 2024 GigaChat Team,
+  https://github.com/salute-developers/GigaAM
+- GigaAM v3 ONNX conversion (istupakov/gigaam-v3-onnx): MIT,
+  https://huggingface.co/istupakov/gigaam-v3-onnx
+- onnx-asr (inference runtime for GigaAM and Silero VAD): MIT
+- Silero VAD (voice activity detection model): MIT, © 2020-present Silero Team;
+  ONNX conversion istupakov/silero-vad-onnx, https://huggingface.co/istupakov/silero-vad-onnx
+  The license texts of GigaAM and Silero VAD are downloaded together with the model
+  into the tone-models volume (folder gigaam/v3_e2e_ctc_int8/).
+
+РУССКИЙ
+
+Исходный код MedScribe распространяется по лицензии GNU Affero General Public
+License версии 3 или любой более поздней (AGPL-3.0-or-later). См. файл LICENSE.
+
+Название и знак MagaMED не входят в лицензию AGPL. В форках и изменённых
+версиях их нужно убрать или заменить.
+
+Сторонние компоненты:
+- Модель распознавания речи T-one: Apache-2.0, Т-Банк (voicekit-team/T-one),
+  https://github.com/voicekit-team/T-one
+- sherpa-onnx (среда разметки по голосу): Apache-2.0, k2-fsa,
+  https://github.com/k2-fsa/sherpa-onnx
+- pyannote segmentation-3.0 (модель ONNX): MIT, © 2022 CNRS,
+  https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-segmentation-models;
+  текст лицензии поставляется в образе tone: /opt/diar/LICENSE-pyannote-segmentation-3.0
+- 3D-Speaker CAM++ VoxCeleb (модель отпечатков голоса): Apache-2.0, ModelScope/3D-Speaker,
+  https://github.com/modelscope/3D-Speaker
+- GigaAM v3 (модель распознавания речи, v3_e2e_ctc): MIT, © 2024 GigaChat Team,
+  https://github.com/salute-developers/GigaAM
+- GigaAM v3, ONNX-конвертация (istupakov/gigaam-v3-onnx): MIT,
+  https://huggingface.co/istupakov/gigaam-v3-onnx
+- onnx-asr (среда запуска GigaAM и Silero VAD): MIT
+- Silero VAD (модель поиска речи): MIT, © 2020-present Silero Team;
+  ONNX-конвертация istupakov/silero-vad-onnx, https://huggingface.co/istupakov/silero-vad-onnx
+  Тексты лицензий GigaAM и Silero VAD скачиваются вместе с моделью в том tone-models (папка gigaam/v3_e2e_ctc_int8/).

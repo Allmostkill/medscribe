@@ -1,0 +1,173 @@
+name: medscribe
+
+services:
+  # одноразово создаёт секреты в томе secrets (никогда не перезаписывает существующие)
+  init:
+    image: ghcr.io/allmostkill/medscribe-app:main
+    command: ["node", "scripts/init-secrets.mjs"]
+    environment:
+      SECRETS_DIR: /app/secrets
+    volumes:
+      - secrets:/app/secrets
+    network_mode: none
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+  postgres:
+    image: ghcr.io/allmostkill/medscribe-postgres:16.10-bookworm
+    user: postgres
+    environment:
+      POSTGRES_DB: medscribe
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/medscribe/postgres_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - secrets:/run/secrets/medscribe:ro
+      - ./db/initdb:/docker-entrypoint-initdb.d:ro
+    networks:
+      - db
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "medscribe"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  # применяет миграции схемы (db/migrations) к существующей базе, затем завершается
+  migrate:
+    image: ghcr.io/allmostkill/medscribe-postgres:16.10-bookworm
+    user: postgres
+    command: ["bash", "/migrate.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGDATABASE: medscribe
+    volumes:
+      - ./db/migrations:/migrations:ro
+      - ./db/migrate.sh:/migrate.sh:ro
+      - secrets:/run/secrets/medscribe:ro
+    networks:
+      - db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+  postgrest:
+    image: ghcr.io/allmostkill/medscribe-postgrest:v12.2.12
+    user: "1000:1000"
+    read_only: true
+    environment:
+      PGRST_DB_URI: "@/run/secrets/medscribe/postgrest_db_uri"
+      PGRST_JWT_SECRET: "@/run/secrets/medscribe/postgrest_jwt_secret"
+      PGRST_DB_SCHEMAS: public
+      PGRST_OPENAPI_MODE: disabled
+      PGRST_LOG_LEVEL: error
+      PGRST_SERVER_PORT: "3000"
+    volumes:
+      - secrets:/run/secrets/medscribe:ro
+    networks:
+      - db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  app:
+    image: ghcr.io/allmostkill/medscribe-app:main
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      TONE_SERVICE_URL: http://tone:5001
+      POSTGREST_URL: http://postgrest:3000
+      SECRETS_DIR: /app/secrets
+      APP_PORT: ${APP_PORT:-3000}
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    # чтобы из контейнера открывался LLM на хосте (например, Ollama): http://host.docker.internal:11434/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - db
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+      postgrest:
+        condition: service_started
+      tone:
+        condition: service_started
+    volumes:
+      - app-logs:/app/logs
+      - secrets:/app/secrets:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  tone:
+    image: ghcr.io/allmostkill/medscribe-tone:main
+    # наружу не публикуется: сервис доступен только приложению внутри сети compose
+    environment:
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+      DIARIZATION: ${DIARIZATION:-on}
+    expose:
+      - "5001"
+    networks:
+      - default
+    volumes:
+      - tone-models:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,sys,urllib.request; sys.exit(0 if json.load(urllib.request.urlopen('http://127.0.0.1:5001/health', timeout=5)).get('ok') is True else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 1200s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+networks:
+  default: {}
+  db:
+    internal: true
+
+volumes:
+  app-logs: {}
+  tone-models: {}
+  pgdata: {}
+  secrets: {}
