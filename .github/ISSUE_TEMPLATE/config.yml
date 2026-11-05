@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Уязвимость безопасности
+    url: https://github.com/Allmostkill/medscribe/blob/main/SECURITY.md
+    about: Не публикуйте уязвимости в issue — см. SECURITY.md

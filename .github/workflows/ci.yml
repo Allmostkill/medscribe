@@ -1,0 +1,299 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run check
+
+  tone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+      - run: python -m py_compile tone-service/app.py tone-service/diarize.py tone-service/gigaam.py tone-service/fetch_diar_models.py
+      - run: python tone-service/test_diarize.py
+      - run: python tone-service/test_gigaam.py
+
+  scripts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: shellcheck
+        # Без UTF-8 shellcheck падает на кириллице в выводе.
+        env:
+          LANG: C.UTF-8
+        run: |
+          shellcheck -s sh scripts/install.sh scripts/install-server.sh scripts/open.sh scripts/diagnose.sh scripts/icons/make-icons.sh
+          shellcheck scripts/release/*.sh scripts/update.sh
+          shellcheck -S error scripts/backup.sh scripts/restore.sh db/migrate.sh
+
+      - name: Разбор install.ps1, open.ps1 и diagnose.ps1 (PowerShell)
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($name in 'scripts/install.ps1', 'scripts/open.ps1', 'scripts/diagnose.ps1') {
+            $errors = $null
+            $path = (Resolve-Path $name).Path
+            [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$errors)
+            foreach ($e in $errors) { Write-Host "${name}:$($e.Extent.StartLineNumber): $($e.Message)"; $failed = $true }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Проверки места и безопасной диагностики
+        run: python3 scripts/check-install-support.py
+
+      - name: docker compose config
+        env:
+          MEDSCRIBE_DOMAIN: example.com
+          ACME_EMAIL: ci@example.com
+        run: |
+          docker compose config -q
+          docker compose -f docker-compose.yml -f docker-compose.build.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.server.yml config -q
+
+      - name: Пакет релиза
+        run: |
+          scripts/release/make-bundle.sh 0.0.0-ci "$RUNNER_TEMP/bundle"
+          cd "$RUNNER_TEMP/bundle"
+          sha256sum -c medscribe-bundle.tar.gz.sha256
+          for f in scripts/open.sh scripts/open.ps1 scripts/diagnose.sh scripts/diagnose.ps1 scripts/icons/medscribe.icns scripts/icons/medscribe.ico scripts/icons/medscribe.png; do
+            tar -tzf medscribe-bundle.tar.gz | grep -qx "medscribe-bundle/$f" || { echo "В пакете нет $f" >&2; exit 1; }
+          done
+          if tar -xzOf medscribe-bundle.tar.gz medscribe-bundle/docker-compose.yml | grep -n ':main'; then
+            echo "В docker-compose.yml пакета остался тег :main" >&2
+            exit 1
+          fi
+
+      - name: Сторонние образы есть в compose
+        run: |
+          while read -r source target; do
+            case "$source" in ''|'#'*) continue ;; esac
+            if ! grep -qF "ghcr.io/allmostkill/$target" docker-compose.yml docker-compose.server.yml; then
+              echo "Цель $target из third-party-images.txt не найдена в compose-файлах" >&2
+              exit 1
+            fi
+          done < scripts/release/third-party-images.txt
+
+      - name: Оборванная загрузка установщика ничего не делает
+        run: |
+          tmp="$(mktemp -d)"
+          mkdir "$tmp/bin" "$tmp/home"
+          printf '#!/bin/sh\necho "$@" >> "%s/docker-called"\nexit 1\n' "$tmp" > "$tmp/bin/docker"
+          chmod +x "$tmp/bin/docker"
+          HOME="$tmp/home" TMPDIR="$tmp" PATH="$tmp/bin:$PATH" sh -c 'head -c 1500 scripts/install.sh | sh' || true
+          if [ -e "$tmp/home/medscribe" ]; then
+            echo "Оборванный установщик создал папку medscribe" >&2
+            exit 1
+          fi
+          if [ -e "$tmp/docker-called" ]; then
+            echo "Оборванный установщик вызвал docker:" >&2
+            cat "$tmp/docker-called" >&2
+            exit 1
+          fi
+
+  image:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [web, tone, scripts]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: app, context: ., arch: amd64, runner: ubuntu-24.04 }
+          - { name: app, context: ., arch: arm64, runner: ubuntu-24.04-arm }
+          - { name: tone, context: tone-service, arch: amd64, runner: ubuntu-24.04 }
+          - { name: tone, context: tone-service, arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Владелец GHCR в нижнем регистре
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Сборка и загрузка по дайджесту
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+          outputs: type=image,name=ghcr.io/${{ env.OWNER }}/medscribe-${{ matrix.name }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.arch }}
+      - name: Сохраняю дайджест
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: digest-${{ matrix.name }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  image-merge:
+    needs: image
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        name: [app, tone]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Владелец GHCR в нижнем регистре
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-${{ matrix.name }}-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Теги
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/${{ env.OWNER }}/medscribe-${{ matrix.name }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+      - name: Объединяю в один многоархитектурный образ
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ghcr.io/${{ env.OWNER }}/medscribe-${{ matrix.name }}
+        run: |
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "$IMAGE@sha256:%s " *)
+      - name: Проверка
+        run: docker buildx imagetools inspect "ghcr.io/$OWNER/medscribe-${{ matrix.name }}:${{ steps.meta.outputs.version }}"
+
+  mirror:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: scripts
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Владелец GHCR в нижнем регистре
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Зеркалирую сторонние образы
+        run: |
+          while read -r source target; do
+            case "$source" in ''|'#'*) continue ;; esac
+            docker buildx imagetools create -t "ghcr.io/$OWNER/$target" "$source"
+          done < scripts/release/third-party-images.txt
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [image-merge, mirror]
+    # environment с обязательным одобрением владельца: см. CONTRIBUTING.md, «Выпуск версии»
+    environment: release
+    permissions:
+      contents: write
+      packages: read
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+      - name: Владелец GHCR в нижнем регистре
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - name: Тег совпадает с версией в package.json
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$version" != "$pkg" ]; then
+            echo "Тег $GITHUB_REF_NAME не совпадает с версией в package.json ($pkg)" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Дайджесты опубликованных образов
+        run: |
+          digests="$RUNNER_TEMP/digests.txt"
+          : > "$digests"
+          refs="ghcr.io/$OWNER/medscribe-app:$VERSION ghcr.io/$OWNER/medscribe-tone:$VERSION"
+          while read -r source target; do
+            case "$source" in ''|'#'*) continue ;; esac
+            refs="$refs ghcr.io/$OWNER/$target"
+          done < scripts/release/third-party-images.txt
+          for ref in $refs; do
+            digest="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')"
+            case "$digest" in
+              sha256:????????????????????????????????????????????????????????????????) ;;
+              *) echo "Нет дайджеста для $ref: '$digest'" >&2; exit 1 ;;
+            esac
+            echo "$ref $digest" | tee -a "$digests"
+          done
+      - name: Пакет релиза
+        env:
+          MEDSCRIBE_DIGESTS_FILE: ${{ runner.temp }}/digests.txt
+        run: scripts/release/make-bundle.sh "$VERSION" out
+      - name: Установщики
+        run: |
+          for f in install.sh install.ps1 install-server.sh; do
+            cp "scripts/$f" "out/$f"
+            (cd out && sha256sum "$f" > "$f.sha256")
+          done
+      - name: Публикация релиза
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          case "$VERSION" in *-*) flags="--prerelease" ;; esac
+          # shellcheck disable=SC2086
+          gh release create "$GITHUB_REF_NAME" out/* --generate-notes $flags
