@@ -1,0 +1,410 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Brand violet: actions and selection. Light steps are assistant surfaces. */
+  --color-primary-50:  #f5f1fc;
+  --color-primary-100: #eee6fa;
+  --color-primary-200: #ddcef5;
+  --color-primary-300: #bea0ec;
+  --color-primary-400: #9e74e2;
+  --color-primary-500: #8050d5;
+  --color-primary-600: #6836d9;
+  --color-primary-700: #572bb9;
+  --color-primary-800: #472593;
+  --color-primary-900: #39216e;
+  --color-primary-950: #251544;
+
+  /* Quiet violet-tinted neutrals. Documents keep their white reading surface.
+     ds-600 is secondary text; ds-400 is for icons and input boundaries. */
+  --color-ds-50:   #f8f7fa;
+  --color-ds-100:  #f3f1f6;
+  --color-ds-150:  #edeaf1;
+  --color-ds-200:  #e4dfeb;
+  --color-ds-300:  #cec7d9;
+  --color-ds-400:  #90859c;
+  --color-ds-600:  #6f647d;
+  --color-ds-700:  #5c5269;
+  --color-ds-800:  #493f56;
+  --color-ds-900:  #332a40;
+  --color-ds-950:  #272030;
+
+  /* Semantic — Success. Ступени 100 и 500 добавлены при переводе дефолтных
+     классов Tailwind на семантику — значения взяты у самих дефолтов, чтобы
+     замена не сдвинула ни одного пикселя. Монотонность шкалы проверена. */
+  --color-success-50:  #f0fdf4;
+  --color-success-100: #dcfce7;
+  --color-success-200: #bbf7d0;
+  --color-success-500: #00c950;
+  --color-success-600: #16a34a;
+  --color-success-700: #15803d;
+
+  /* Semantic — Warning. Сюда же сведены orange и yellow: в коде они значили
+     ровно «предупреждение», просто выбирались на глаз. */
+  --color-warning-50:  #fffbeb;
+  --color-warning-100: #fef3c7;
+  --color-warning-200: #fee685;
+  --color-warning-300: #ffd230;
+  --color-warning-500: #fe9a00;
+  --color-warning-600: #e17100;
+  --color-warning-700: #b45309;
+  --color-warning-800: #973c00;
+  --color-warning-900: #78350f;
+
+  /* Semantic — Error */
+  --color-error-50:  #fef2f2;
+  --color-error-100: #ffe2e2;
+  --color-error-200: #fecaca;
+  --color-error-300: #ffa2a2;
+  --color-error-500: #ef4444;
+  --color-error-600: #d92525;
+  --color-error-700: #b91c1c;
+  --color-error-800: #9f0712;
+  --color-error-900: #7f1d1d;  /* фон тоста-ошибки */
+
+  /* Semantic — Info. Синий для нейтральных пояснений и самой мягкой степени
+     подсказки («К сведению»). */
+  --color-info-50:  #eff6ff;
+  --color-info-100: #dbeafe;
+  --color-info-200: #bedbff;
+  --color-info-400: #51a2ff;
+  --color-info-600: #155dfc;
+  --color-info-800: #193cb8;
+  --color-info-900: #1c398e;
+}
+
+/* Global defaults */
+html, body {
+  background-color: var(--color-ds-50);
+  /* Belt and braces — prevent any rogue child element from causing horizontal
+     scroll. The dashboard layout uses min-w-0 / minmax(0,1fr) for the same
+     reason, but this is the last line of defence. */
+  overflow-x: hidden;
+}
+
+body {
+  color: var(--color-ds-950);
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Кегли внутри блока рабочего поля ────────────────────────────────────────
+   Размер текста задаётся ролью, а не числом пикселей, и роль читает значение
+   из переменной, которую переопределяет ярус плотности блока (data-density
+   выставляет BlockShell). Так «мелкий служебный текст» перестаёт быть
+   рассыпанными по коду text-[10px] и становится одним решением в одном месте.
+
+   Ряд cozy — ровно те пиксели, что стояли в коде до этого шага, поэтому у
+   врача с нетронутой раскладкой не меняется ничего.
+
+   Четыре ступени плюс дисплейная: 10-12-14-16, отношение соседних ≈1.15-1.2.
+   До этого ролей было восемь — 9-10-11-12-13-14-15, слепок накопившегося
+   разнобоя, где соседние ступени отличались на пиксель и на глаз не
+   различались. Ни одна роль при сведении не уменьшилась: 60 мест выросли на
+   пиксель, 44 остались как были. В медицинском интерфейсе это верное
+   направление — 9 и 11 пикселей были мелковаты для подписей, которые читают
+   весь день.
+
+   В сжатом блоке кегль почти не уменьшается: место экономят отступы, а
+   клинический текст мельче 11px в медицинском интерфейсе не набирают.
+   Уменьшается только то, что и так крупное. */
+:root {
+  --bl-caption: 10px;
+  --bl-label:   12px;
+  --bl-body:    14px;
+  --bl-lead:    16px;
+  --bl-display: 48px;
+
+  /* Отступы. Уменьшать в сжатом блоке нужно именно их: это освобождает место,
+     ничего не теряя, в отличие от кегля. bl-pad-lg — читающая поверхность
+     стенограммы, ей полей нужно больше.
+
+     В rem, а не в px, намеренно: p-3 у Tailwind — это 0.75rem, и у врача с
+     увеличенным шрифтом в браузере отступы обязаны расти вместе с текстом.
+     Записать сюда 12px значило бы тихо отобрать это масштабирование. */
+  --bl-pad:      0.75rem;
+  --bl-pad-lg:   1rem;
+  --bl-stack-sm: 0.375rem;
+  --bl-stack:    0.625rem;
+  --bl-stack-lg: 0.75rem;
+}
+
+[data-density="compact"] {
+  --bl-label:   11px;
+  --bl-body:    13px;
+  --bl-lead:    14px;
+  --bl-display: 30px;
+
+  --bl-pad:      0.5rem;
+  --bl-pad-lg:   0.75rem;
+  --bl-stack-sm: 0.25rem;
+  --bl-stack:    0.375rem;
+  --bl-stack-lg: 0.5rem;
+}
+
+[data-density="roomy"] {
+  --bl-caption: 11px;
+  --bl-label:   13px;
+  --bl-body:    15px;
+  --bl-lead:    18px;
+  --bl-display: 56px;
+
+  --bl-pad:      1rem;
+  --bl-pad-lg:   1.25rem;
+  --bl-stack-sm: 0.5rem;
+  --bl-stack:    0.75rem;
+  --bl-stack-lg: 1rem;
+}
+
+/* Запасные значения — на случай, если роль окажется вне блока: тогда текст
+   получит сегодняшний размер, а не сломанный font-size. */
+.bl-caption { font-size: var(--bl-caption, 10px); }
+.bl-label   { font-size: var(--bl-label,   12px); }
+.bl-body    { font-size: var(--bl-body,    14px); }
+.bl-lead    { font-size: var(--bl-lead,    16px); }
+.bl-display { font-size: var(--bl-display, 48px); }
+
+/* Medical data — JetBrains Mono */
+.font-data {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* ── Рабочее поле приёма: ручки растягивания блоков ──────────────────────────
+   Из коробки ручка — квадратик 20×20 с еле заметной стрелкой в углу (её рисует
+   ::after у react-grid-layout) и без z-index. На белой карточке её не видно, а
+   боковые ручки к тому же повёрнуты на 45° и висят по центру грани — «взяться
+   за нижний край» блока нечем, то есть уменьшить его по высоте невозможно.
+   Заменяем на явные полосы во всю длину грани.
+
+   ВАЖНО про специфичность: react-grid-layout задаёт свои ручки селекторами
+   вида `.react-grid-item > .react-resizable-handle.react-resizable-handle-s`
+   (три класса). Перебить их можно только не меньшей специфичностью, иначе
+   поворот на 45° и размер 20×20 останутся — что и происходило. Отсюда такие
+   длинные селекторы ниже, укорачивать их нельзя.
+
+   Ручки рендерятся только при isResizable, то есть в режиме правки — вне его
+   этих правил на экране нет. */
+.workspace-grid .react-grid-item > .react-resizable-handle {
+  padding: 0;
+  z-index: 25;              /* выше содержимого карточки и её фона */
+  opacity: 0;
+  transform: none;          /* библиотека крутит боковые ручки на 45°/315° */
+  background-image: none;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+
+/* Стрелка-уголок от react-grid-layout: со сплошными полосами она лишняя. */
+.workspace-grid .react-grid-item > .react-resizable-handle::after {
+  content: none;
+}
+
+/* Показываем только у блока под курсором, чтобы поле не рябило рамками. */
+.workspace-grid .react-grid-item:hover > .react-resizable-handle { opacity: 1; }
+.workspace-grid .react-grid-item > .react-resizable-handle:hover {
+  background-color: var(--color-primary-900);
+}
+
+/* Нижняя грань — тянем высоту. Именно её и не хватало, чтобы уменьшить блок. */
+.workspace-grid .react-grid-item > .react-resizable-handle.react-resizable-handle-s {
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  top: auto;
+  width: auto;
+  height: 8px;
+  margin: 0;
+  cursor: ns-resize;
+  background-color: var(--color-primary-300);
+  border-radius: 4px 4px 0 0;
+}
+
+/* Правая грань — тянем ширину. */
+.workspace-grid .react-grid-item > .react-resizable-handle.react-resizable-handle-e {
+  top: 10px;
+  bottom: 10px;
+  right: 0;
+  left: auto;
+  width: 8px;
+  height: auto;
+  margin: 0;
+  cursor: ew-resize;
+  background-color: var(--color-primary-300);
+  border-radius: 4px 0 0 4px;
+}
+
+/* Угол — обе оси сразу; перекрывает концы полос, поэтому лежит выше. */
+.workspace-grid .react-grid-item > .react-resizable-handle.react-resizable-handle-se {
+  right: 0;
+  bottom: 0;
+  top: auto;
+  left: auto;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  cursor: se-resize;
+  background-color: var(--color-primary-900);
+  border-radius: 6px 0 8px 0;
+  z-index: 26;
+}
+
+/* ── Печать памятки пациенту ─────────────────────────────────────────────────
+   Врач нажимает «Распечатать» в протоколе, и на бумагу уходит ТОЛЬКО памятка:
+   без интерфейса, без протокола для МИС, без стенограммы. Прячем всё через
+   visibility, а не display — так сохраняется расклад страницы и не ломается
+   вёрстка приложения на экране.
+
+   Почему печать, а не отправка пациенту: бумага не выносит сведения о здоровье
+   за пределы кабинета. Отправка в мессенджер/SMS — это уже врачебная тайна и
+   152-ФЗ, с согласием пациента и его фиксацией; отдельная задача. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #patient-memo-print,
+  #patient-memo-print * {
+    visibility: visible;
+  }
+
+  #patient-memo-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0 8mm;
+    color: #000;
+    font-size: 12pt;
+    line-height: 1.45;
+  }
+
+  #patient-memo-print h1 {
+    font-size: 18pt;
+    font-weight: 700;
+    margin-bottom: 6mm;
+  }
+
+  #patient-memo-print section {
+    margin-bottom: 5mm;
+    /* Раздел не должен разрываться между страницами: «когда вызывать скорую»,
+       разрезанное пополам, читается как оборванная инструкция. */
+    break-inside: avoid;
+  }
+
+  #patient-memo-print h2 {
+    font-size: 11pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 1.5mm;
+  }
+
+  #patient-memo-print p {
+    /* Переводы строк из textarea — это структура памятки (по препарату на
+       строку), её нельзя схлопывать. */
+    white-space: pre-line;
+    margin: 0;
+  }
+
+  #patient-memo-print footer {
+    margin-top: 8mm;
+    padding-top: 3mm;
+    border-top: 1px solid #000;
+    font-size: 9pt;
+  }
+
+  @page {
+    margin: 12mm;
+  }
+}
+
+/* Печатный блок существует в DOM всегда, но на экране его нет. */
+#patient-memo-print {
+  display: none;
+}
+
+@media print {
+  #patient-memo-print {
+    display: block;
+  }
+}
+
+/* ── Разметка клинических рекомендаций Минздрава ────────────────────────────
+   Это чужой HTML из рубрикатора, а не наша вёрстка: в нём живут таблицы (до
+   11 на документ), вложенные списки и подзаголовки, и без своих правил он
+   рассыпается — Tailwind сбрасывает маркеры списков и рамки таблиц.
+   Показываем внутри блока рабочего поля, ширина которого измеряется в клетках
+   сетки, поэтому таблицы прокручиваются по горизонтали внутри себя, а не
+   ломают колонку. */
+.guideline-html {
+  overflow-x: auto;
+}
+
+.guideline-html p {
+  margin: 0 0 0.5rem;
+}
+.guideline-html p:last-child {
+  margin-bottom: 0;
+}
+
+.guideline-html h1,
+.guideline-html h2 {
+  font-size: var(--bl-label, 12px);
+  font-weight: 600;
+  color: var(--color-ds-900);
+  margin: 0.75rem 0 0.375rem;
+}
+.guideline-html h1:first-child,
+.guideline-html h2:first-child {
+  margin-top: 0;
+}
+
+.guideline-html strong { font-weight: 600; }
+.guideline-html em { font-style: italic; }
+
+.guideline-html ul { list-style: disc; padding-left: 1.1rem; margin: 0 0 0.5rem; }
+.guideline-html ol { list-style: decimal; padding-left: 1.3rem; margin: 0 0 0.5rem; }
+.guideline-html li { margin-bottom: 0.2rem; }
+
+.guideline-html table {
+  border-collapse: collapse;
+  /* min-width, а не width: узкую таблицу растягивать на всю ширину незачем,
+     широкую — нельзя сжимать, она станет нечитаемой. */
+  width: max-content;
+  min-width: 100%;
+  margin: 0 0 0.5rem;
+}
+.guideline-html th,
+.guideline-html td {
+  border: 1px solid var(--color-ds-200);
+  padding: 0.25rem 0.375rem;
+  vertical-align: top;
+  text-align: left;
+}
+.guideline-html th {
+  background: var(--color-ds-100);
+  font-weight: 600;
+}
+
+.guideline-html a {
+  color: var(--color-primary-600);
+  text-decoration: underline;
+}
+
+.guideline-html sup { font-size: 0.75em; vertical-align: super; }
+.guideline-html sub { font-size: 0.75em; vertical-align: sub; }
+
+/* Рисунки в индекс не идут — они весят 70–87 % документа. На их месте
+   остаётся пометка: врач должен видеть, что здесь был рисунок, а не гадать,
+   почему текст обрывается. */
+.guideline-html .cr-figure {
+  display: inline-block;
+  font-size: var(--bl-caption, 10px);
+  color: var(--color-ds-600);
+  background: var(--color-ds-100);
+  border: 1px dashed var(--color-ds-300);
+  border-radius: 4px;
+  padding: 0.125rem 0.375rem;
+}

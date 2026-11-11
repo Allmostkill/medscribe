@@ -1,0 +1,73 @@
+{
+  "name": "medscribe",
+  "description": "Self-hosted голосовой ассистент врача: запись приёма, локальная расшифровка (T-one), черновик протокола через OpenAI-совместимую модель",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "version": "0.2.2",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Allmostkill/medscribe.git"
+  },
+  "homepage": "https://github.com/Allmostkill/medscribe#readme",
+  "bugs": {
+    "url": "https://github.com/Allmostkill/medscribe/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx server.ts",
+    "start": "tsx server.ts",
+    "build": "vite build",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit",
+    "reset-password": "tsx scripts/reset-password.ts",
+    "check": "tsx scripts/check-audio-persist.ts && tsx scripts/check-communication.ts && tsx scripts/check-note-check.ts && tsx scripts/check-diarization.ts && tsx scripts/check-layout-contract.ts && tsx scripts/check-deidentify.ts && tsx scripts/check-llm.ts && tsx scripts/check-llm-settings-rules.ts && tsx scripts/check-llm-form.ts && tsx scripts/check-review-fixes.ts && tsx scripts/check-finish-flow.ts && tsx scripts/check-stt-engine.ts && tsx scripts/check-mic-constraints.ts && tsx scripts/check-db-client.ts && npm run check:calculators && npm run check:routes",
+    "check:calculators": "vite-node scripts/check-calculators.ts",
+    "check:routes": "node scripts/check-routes.mjs",
+    "fetch-guidelines": "tsx scripts/fetch-guidelines.mjs",
+    "quality-report": "node scripts/quality-report.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@supabase/postgrest-js": "2.105.2",
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "bcryptjs": "^3.0.3",
+    "dompurify": "^3.4.17",
+    "dotenv": "^17.4.2",
+    "express": "^4.22.1",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "otplib": "^12.0.1",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-grid-layout": "^2.2.4",
+    "react-resizable": "3.2.0",
+    "react-router-dom": "^7.14.2",
+    "svg-captcha": "^1.4.0",
+    "tsx": "^4.21.0",
+    "undici": "6.29.1",
+    "vite": "^6.2.0",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^22.14.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@types/ws": "^8.18.1",
+    "tailwindcss": "^4.1.14",
+    "typescript": "~5.8.2",
+    "vite-node": "3.2.4"
+  },
+  "overrides": {
+    "qs": "6.16.2"
+  }
+}
