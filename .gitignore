@@ -1,0 +1,19 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+logs/*.log
+.env*
+!.env.example
+*.sqlite
+*.db
+*.dump
+*.tar
+docker-compose.override.yml
+
+# локальные настройки Claude Code
+.claude/
+__pycache__/
+medscribe-diagnostic*

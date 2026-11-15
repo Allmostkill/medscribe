@@ -1,0 +1,14 @@
+# Сборка образов из исходников вместо загрузки готовых.
+# Использование: docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+services:
+  init:
+    build: .
+    pull_policy: build
+
+  app:
+    build: .
+    pull_policy: build
+
+  tone:
+    build: ./tone-service
+    pull_policy: build
