@@ -5,6 +5,7 @@
 
 import { loadSegments } from './audioBuffer';
 import { ensureValidSession } from './auth';
+import { sttFullErrorMessage } from '../utils/fileImport';
 import { mergeSessionSegments, type DiarizationStatus, type SessionPart, type SttSegment } from '../utils/speakers';
 
 export interface TranscriptionProgress {
@@ -21,6 +22,9 @@ export interface FullTranscriptionResult {
   diarized: boolean;
   diarization?: DiarizationStatus;
 }
+
+/** Ошибка HTTP сервиса распознавания: текст врачу человеческий, подробности уже в console.warn. */
+class SttHttpError extends Error {}
 
 /**
  * Transcribe a single audio blob via T-one. Retries up to 3 times
@@ -63,14 +67,11 @@ async function transcribeOne(audio: Blob, signal?: AbortSignal): Promise<Omit<Fu
           try { body = await res.json(); } catch {}
           fatal = new Error(body?.error || 'Слишком много запросов, попробуйте позже');
         } else {
-          let errText = '';
-          try { errText = await res.text(); } catch {}
-          fatal = new Error(`Сервер вернул ${res.status}: ${errText.slice(0, 100)}`);
+          fatal = new SttHttpError(sttFullErrorMessage(res.status));
         }
       } else if (!res.ok) {
         console.warn(`[STT full] попытка ${attempt}/3: HTTP ${res.status}`);
-        const errText = await res.text();
-        throw new Error(`Сервер вернул ${res.status}: ${errText.slice(0, 100)}`);
+        throw new SttHttpError(sttFullErrorMessage(res.status));
       } else {
         const data = await res.json();
         return {
@@ -81,7 +82,7 @@ async function transcribeOne(audio: Blob, signal?: AbortSignal): Promise<Omit<Fu
       }
     } catch (err: any) {
       if (signal?.aborted) throw new Error('Отменено');
-      if (!String(err?.message ?? '').startsWith('Сервер вернул')) {
+      if (!(err instanceof SttHttpError)) {
         console.warn(`[STT full] попытка ${attempt}/3: ${err?.name || 'Error'}`);
       }
       lastErr = err instanceof TypeError ? new Error('Нет связи с сервером') : err;

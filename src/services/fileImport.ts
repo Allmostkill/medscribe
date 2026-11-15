@@ -5,7 +5,9 @@
 
 import { ensureValidSession } from './auth';
 import { importSession } from './audioBuffer';
-import { errorFromResponse, importErrorMessage, maxAttempts, partRanges, retryDelayMs } from '../utils/fileImport';
+import {
+  errorFromResponse, forgetUploadId, importErrorMessage, maxAttempts, partRanges, recallUploadId, rememberUploadId, retryDelayMs,
+} from '../utils/fileImport';
 
 export interface ImportProgress {
   phase: 'upload' | 'prepare';
@@ -33,12 +35,69 @@ function abortError(): Error {
   return e;
 }
 
-async function authHeader(): Promise<string> {
+// Последний выданный заголовок: на pagehide ждать токен асинхронно нельзя.
+let lastAuth: string | null = null;
+
+function store(): Storage | null {
+  try { return typeof sessionStorage !== 'undefined' ? sessionStorage : null; } catch { return null; }
+}
+
+/** Снять загрузку на сервере; keepalive — чтобы запрос пережил закрытие страницы. */
+function dropUpload(id: string, auth: string, keepalive: boolean): Promise<unknown> {
+  return fetch(`/api/stt/file/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { Authorization: auth }, keepalive })
+    .catch(() => { /* не критично: сервер снимет брошенную сам */ });
+}
+
+const UPLOAD_LOCK_PREFIX = 'medscribe-upload:';
+
+function locksApi(): any {
+  return typeof navigator !== 'undefined' ? (navigator as any).locks : undefined;
+}
+
+/**
+ * Пока идёт загрузка, вкладка держит Web Lock на её uploadId (браузер отпускает замок при выгрузке страницы).
+ * Дубль вкладки копирует sessionStorage вместе с ключом: по замку видно, что загрузка ещё живая. Web Locks нет — null.
+ */
+function holdUploadLock(id: string): (() => void) | null {
+  const locks = locksApi();
+  if (!locks?.request) return null;
+  let release: () => void = () => {};
+  try {
+    locks.request(UPLOAD_LOCK_PREFIX + id, () => new Promise<void>(res => { release = res; })).catch(() => {});
+  } catch { return null; }
+  return () => release();
+}
+
+/**
+ * Загрузка прошлой страницы (обновили или закрыли вкладку) ещё числится на сервере: снимаем до нового start.
+ * Замок занят — загрузку ведёт другая вкладка (дубль с копией sessionStorage): ключ и сервер не трогаем.
+ */
+async function dropStaleUpload(): Promise<void> {
+  const id = recallUploadId(store());
+  if (!id) return;
+  const drop = async () => {
+    forgetUploadId(store());
+    try { await dropUpload(id, await authHeader(false), false); } catch { /* не критично */ }
+  };
+  const locks = locksApi();
+  if (!locks?.request) return drop();
+  try {
+    await locks.request(UPLOAD_LOCK_PREFIX + id, { ifAvailable: true }, async (lock: unknown) => {
+      if (lock) await drop();
+    });
+  } catch {
+    await drop();
+  }
+}
+
+async function authHeader(remember = true): Promise<string> {
   // Токен берём на каждый запрос: загрузка большого файла может идти дольше часа.
   const session = await ensureValidSession();
   if (!session?.token) throw new ImportError(importErrorMessage(401, undefined, ''), false);
   if (session.expiresAt <= Date.now()) throw new ImportError(importErrorMessage(0, undefined, ''), true);
-  return `Bearer ${session.token}`;
+  const header = `Bearer ${session.token}`;
+  if (remember) lastAuth = header;
+  return header;
 }
 
 /** Один запрос к серверу: тело ответа — JSON {error, code}; повтор — по shouldRetry. */
@@ -94,11 +153,23 @@ function base64ToBlob(b64: string, type: string): Blob {
 export async function importAudioFile(file: File, opts: ImportOptions): Promise<{ sessionId: string; totalSec: number }> {
   const { signal, onProgress } = opts;
   let uploadId: string | null = null;
+  let releaseLock: (() => void) | null = null;
+  // Ключ не стираем: дошёл ли keepalive-DELETE, неизвестно, повторный DELETE при следующем start безвреден (404).
+  // persisted — страница уходит в bfcache и может вернуться продолжать загрузку: ничего не делаем.
+  const onPageHide = (e: PageTransitionEvent) => {
+    if (e.persisted) return;
+    const id = recallUploadId(store());
+    if (id && lastAuth) void dropUpload(id, lastAuth, true);
+  };
   try {
+    await dropStaleUpload();
     const started = await withRetry(() => call('/api/stt/file/start', { method: 'POST' }, signal), signal);
     uploadId = String(started?.uploadId ?? '');
     if (!uploadId) throw new ImportError('Сервер не принял файл', false);
     const base = `/api/stt/file/${encodeURIComponent(uploadId)}`;
+    rememberUploadId(store(), uploadId);
+    releaseLock = holdUploadLock(uploadId);
+    window.addEventListener('pagehide', onPageHide);
 
     const total = file.size;
     let loaded = 0;
@@ -113,6 +184,10 @@ export async function importAudioFile(file: File, opts: ImportOptions): Promise<
 
     onProgress?.({ phase: 'prepare' });
     const fin = await withRetry(() => call(`${base}/finish`, { method: 'POST' }, signal), signal);
+    // finish принят: сервер сам снял задачу, чистить на сервере нечего.
+    forgetUploadId(store());
+    window.removeEventListener('pagehide', onPageHide);
+    releaseLock?.();
     const raw: any[] = Array.isArray(fin?.segments) ? fin.segments : [];
     if (raw.length === 0) throw new ImportError('Сервер не вернул запись', false);
     const segs = raw.map(s => ({
@@ -129,14 +204,17 @@ export async function importAudioFile(file: File, opts: ImportOptions): Promise<
     );
     return { sessionId, totalSec };
   } catch (err) {
+    window.removeEventListener('pagehide', onPageHide);
+    forgetUploadId(store());
     if (uploadId) {
-      // Серверу не ждём: он сам чистит брошенные загрузки по сроку.
-      authHeader()
-        .then(h => fetch(`/api/stt/file/${encodeURIComponent(uploadId!)}`, { method: 'DELETE', headers: { Authorization: h } }))
-        .catch(() => { /* не критично */ });
+      // Серверу не ждём: он сам снимает брошенные загрузки.
+      authHeader(false).then(h => dropUpload(uploadId!, h, false)).catch(() => { /* не критично */ });
     }
     if (signal?.aborted) throw abortError();
     throw err instanceof Error ? err : new Error(String(err));
+  } finally {
+    releaseLock?.();
+    lastAuth = null;   // токен после загрузки не держим
   }
 }
 

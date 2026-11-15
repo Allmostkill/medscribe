@@ -255,6 +255,41 @@ except SplitError as e:
 assert a not in m.tasks
 shutil.rmtree(base)
 
+# --- drop и add_part: после drop каталог не пересоздаётся
+base = tempfile.mkdtemp()
+m = Manager(base)
+tid = m.create()
+t = m.get(tid)
+mp4_head = b"\x00\x00\x00\x20ftypM4A \x00\x00" + b"\x00" * 100
+t.add_part(0, mp4_head)
+m.drop(tid)
+assert os.listdir(base) == [] and t.destroyed
+try:
+    t.add_part(1, b"x" * 10)  # поздний add_part после drop: на диск не пишем
+    raise AssertionError("destroyed")
+except SplitError as e:
+    assert (e.status, e.code) == (404, "not_found")
+assert os.listdir(base) == []
+# drop параллельно с add_part, держащим замок: drop ждёт замок и стирает после записи
+import threading  # noqa: E402
+for _ in range(20):
+    tid = m.create()
+    t = m.get(tid)
+    t.add_part(0, mp4_head)
+    errs = []
+
+    def _late():
+        try:
+            t.add_part(1, b"y" * 1000)
+        except SplitError as e:
+            errs.append(e.code)
+    th = threading.Thread(target=_late)
+    th.start()
+    m.drop(tid)
+    th.join()
+    assert os.listdir(base) == [], os.listdir(base)
+shutil.rmtree(base)
+
 # --- сквозной тест (нужен ffmpeg с libopus)
 def _have_ffmpeg() -> bool:
     if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):

@@ -126,6 +126,7 @@ class Task:
         self.touched = self.created
         self.working = False  # идёт приём части или finish — не удалять по простою
         self.lock = threading.Lock()
+        self.destroyed = False  # destroy начат: add_part/finish отказывают и на диск не пишут
 
     def _start_ffmpeg(self, src: str) -> None:
         with open(self.err_path, "wb") as err:  # stderr в файл: не забьёт канал и не держит память
@@ -150,8 +151,14 @@ class Task:
                     pass
 
     def destroy(self) -> None:
+        # Сначала флаг и kill без замка: ffmpeg умирает, и add_part/finish, держащие t.lock на записи
+        # в stdin или в wait, возвращаются сами. Потом под замком добиваем (ffmpeg мог стартовать
+        # уже после первого kill) и стираем каталог: параллельный add_part не пересоздаст файл.
+        self.destroyed = True
         self.kill()
-        shutil.rmtree(self.dir, ignore_errors=True)
+        with self.lock:
+            self.kill()
+            shutil.rmtree(self.dir, ignore_errors=True)
 
     def _ffmpeg_exited_early(self) -> None:
         """ffmpeg завершился до finish: дошёл до -t (запись > 2 ч) или не узнал формат.
@@ -168,7 +175,7 @@ class Task:
 
     def add_part(self, seq: int, data: bytes) -> None:
         with self.lock:
-            if self.finished:
+            if self.finished or self.destroyed:
                 raise SplitError(404, "not_found")
             state = classify_seq(self.next_seq, seq)
             if state == "gap":
@@ -199,6 +206,8 @@ class Task:
                     self.proc.stdin.write(data)
                     self.proc.stdin.flush()
                 except (BrokenPipeError, ValueError, OSError):
+                    if self.destroyed:  # ffmpeg убил destroy (задачу сняли), а не формат
+                        raise SplitError(404, "not_found")
                     self._ffmpeg_exited_early()
                     raise SplitError(415, "unsupported")
             self.total += len(data)
@@ -215,7 +224,7 @@ class Task:
 
     def finish(self) -> dict:
         with self.lock:
-            if self.finished:
+            if self.finished or self.destroyed:
                 raise SplitError(404, "not_found")
             self.finished = True  # повтор finish после этого — not_found
             if self.mode is None:

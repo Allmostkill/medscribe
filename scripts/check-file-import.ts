@@ -6,7 +6,8 @@
  */
 import {
   PART_SIZE, MAX_FILE_BYTES, ACCEPT, partRanges, importErrorMessage, shouldRetry, precheckFile, defaultVisitDate,
-  errorFromResponse, maxAttempts, retryDelayMs, MAX_ATTEMPTS, PART_IN_FLIGHT_ATTEMPTS, PART_IN_FLIGHT_DELAY_MS,
+  errorFromResponse, maxAttempts, isAbandonedUpload, pickAbandonedUploads, ABANDONED_AFTER_MS, UPLOAD_ACTIVE_MESSAGE, UPLOAD_ID_KEY,
+  rememberUploadId, recallUploadId, forgetUploadId, sttFullErrorMessage, retryDelayMs, MAX_ATTEMPTS, PART_IN_FLIGHT_ATTEMPTS, PART_IN_FLIGHT_DELAY_MS,
 } from '../src/utils/fileImport';
 
 let bad = 0;
@@ -39,7 +40,7 @@ console.log('importErrorMessage');
   check('gap 409: текст сервера', importErrorMessage(409, 'gap', 'пропущена часть') === 'пропущена часть');
   check('404 gone', importErrorMessage(404, 'gone', 'x') === 'Загрузка прервалась — выберите файл заново');
   check('404 без кода', importErrorMessage(404, undefined, 'x') === 'Загрузка прервалась — выберите файл заново');
-  check('409 upload_active', importErrorMessage(409, 'upload_active', 'x').startsWith('Уже идёт загрузка другого файла'));
+  check('409 upload_active', importErrorMessage(409, 'upload_active', 'x').startsWith('Прошлая загрузка ещё идёт'));
   check('409 part_in_flight', importErrorMessage(409, 'part_in_flight', 'x').startsWith('Сервер ещё принимает'));
   check('413 too_big mp4: про m4a и 300 МБ', importErrorMessage(413, 'too_big', 'x', 'mp4') === 'Файл m4a больше 300 МБ: сохраните запись в mp3 или wav и загрузите снова');
   check('too_long на части', importErrorMessage(413, 'too_long', 'x', 'mp4').startsWith('Запись длиннее'));
@@ -97,6 +98,56 @@ console.log('defaultVisitDate');
   check('будущая → сегодня', defaultVisitDate(new Date(2026, 11, 1).getTime(), now) === '2026-11-15');
   check('1999 → сегодня', defaultVisitDate(new Date(1999, 5, 1).getTime(), now) === '2026-11-15');
   check('NaN → сегодня', defaultVisitDate(NaN, now) === '2026-11-15');
+}
+
+console.log('брошенная загрузка');
+{
+  const t0 = 1_000_000;
+  const u = (o: object) => ({ inFlight: false, finished: false, lastSeenAt: t0, ...o });
+  check('тишина дольше порога — брошена', isAbandonedUpload(u({}), t0 + ABANDONED_AFTER_MS + 1));
+  check('ровно порог — ещё жива', !isAbandonedUpload(u({}), t0 + ABANDONED_AFTER_MS));
+  check('часть в пути — не брошена', !isAbandonedUpload(u({ inFlight: true }), t0 + 10 * ABANDONED_AFTER_MS));
+  check('finish начат — не брошена', !isAbandonedUpload(u({ finished: true }), t0 + 10 * ABANDONED_AFTER_MS));
+  // Самая длинная пауза клиента между запросами: максимум retryDelayMs по всем попыткам всех кодов.
+  const worstPause = Math.max(...[undefined, 'part_in_flight'].flatMap(code =>
+    Array.from({ length: maxAttempts(code) - 1 }, (_, i) => retryDelayMs(code, i + 1))));
+  check('порог больше самой длинной паузы повторов с запасом ×10', ABANDONED_AFTER_MS >= worstPause * 10, `${worstPause} мс`);
+  const now = t0 + ABANDONED_AFTER_MS + 1;
+  const map = new Map<string, { doctorId: string; inFlight: boolean; finished: boolean; lastSeenAt: number }>([
+    ['own-dead', { doctorId: 'd1', inFlight: false, finished: false, lastSeenAt: t0 }],
+    ['own-inflight', { doctorId: 'd1', inFlight: true, finished: false, lastSeenAt: t0 }],
+    ['own-finishing', { doctorId: 'd1', inFlight: false, finished: true, lastSeenAt: t0 }],
+    ['own-fresh', { doctorId: 'd1', inFlight: false, finished: false, lastSeenAt: now - 1000 }],
+    ['other-dead', { doctorId: 'd2', inFlight: false, finished: false, lastSeenAt: t0 }],
+  ]);
+  const picked = pickAbandonedUploads(map, 'd1', now);
+  check('при start снимается только брошенная своя', picked.length === 1 && picked[0] === 'own-dead', picked.join(','));
+  check('текст upload_active честный', importErrorMessage(409, 'upload_active', '') === UPLOAD_ACTIVE_MESSAGE
+    && UPLOAD_ACTIVE_MESSAGE.includes('другой вкладке') && UPLOAD_ACTIVE_MESSAGE.includes('полторы минуты'));
+}
+
+console.log('ключ sessionStorage');
+{
+  const mem = new Map<string, string>();
+  const st = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); }, removeItem: (k: string) => { mem.delete(k); } };
+  rememberUploadId(st, 'abc');
+  check('запомнили', mem.get(UPLOAD_ID_KEY) === 'abc' && recallUploadId(st) === 'abc');
+  forgetUploadId(st);
+  check('очистили', !mem.has(UPLOAD_ID_KEY) && recallUploadId(st) === null);
+  const boom = { getItem: () => { throw new Error('x'); }, setItem: () => { throw new Error('x'); }, removeItem: () => { throw new Error('x'); } };
+  let threw = false;
+  try { rememberUploadId(boom, 'a'); recallUploadId(boom); forgetUploadId(boom); } catch { threw = true; }
+  check('ошибки хранилища не пробрасываются', !threw);
+  check('нет хранилища — без падения', recallUploadId(null) === null);
+}
+
+console.log('sttFullErrorMessage');
+{
+  const m500 = sttFullErrorMessage(500);
+  check('500: человеческая фраза с кодом', m500 === 'сервис распознавания временно не ответил (ошибка 500)');
+  check('500: без JSON и служебных строк', !/[{}"]|Internal|Сервер вернул/.test(m500));
+  check('502/503/504: недоступен', [502, 503, 504].every(s => sttFullErrorMessage(s) === 'сервис распознавания недоступен'));
+  check('400: без JSON', !/[{}"]/.test(sttFullErrorMessage(400)));
 }
 
 if (bad) { console.log(`\nпровалено: ${bad}`); process.exit(1); }

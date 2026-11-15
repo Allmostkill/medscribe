@@ -3,7 +3,7 @@
   "description": "Self-hosted голосовой ассистент врача: запись приёма, локальная расшифровка (T-one), черновик протокола через OpenAI-совместимую модель",
   "private": true,
   "license": "AGPL-3.0-or-later",
-  "version": "0.2.4-rc.1",
+  "version": "0.2.4-rc.2",
   "type": "module",
   "repository": {
     "type": "git",

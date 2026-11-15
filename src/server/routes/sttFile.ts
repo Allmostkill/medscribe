@@ -7,6 +7,7 @@ import { logError, logInfo } from "../errors/logger";
 import { safeErr } from "../logSafe";
 import { rateLimit } from "../middleware/rateLimit";
 import { requireSttAuth } from "../middleware/auth";
+import { pickAbandonedUploads, UPLOAD_ACTIVE_MESSAGE } from "../../utils/fileImport";
 
 // Загрузка аудиофайла приёма: браузер шлёт исходный файл частями по 16 МБ, приложение проксирует
 // их в tone (внутренняя сеть), tone режет на части по 20 мин и отдаёт их в finish. Файл на диске
@@ -34,7 +35,10 @@ const startingDoctors = new Set<string>();
 setInterval(() => {
   const now = Date.now();
   for (const [id, u] of uploads) {
-    if (!u.inFlight && now - u.lastSeenAt > UPLOAD_IDLE_TTL_MS) uploads.delete(id);
+    if (!u.inFlight && now - u.lastSeenAt > UPLOAD_IDLE_TTL_MS) {
+      uploads.delete(id);
+      if (!u.finished) dropToneTask(u.toneId);   // задача в tone иначе висит до своего простоя
+    }
   }
 }, 60 * 1000).unref();
 
@@ -133,12 +137,18 @@ export function registerSttFileRoutes(app: express.Express) {
     const doctorId: string = (req as any).user.id;
     // Не больше одной активной загрузки на врача: иначе один врач займёт обе очереди нарезки.
     const now = Date.now();
+    // Брошенную (нет части в пути, тишина дольше порога) снимаем как DELETE: вкладку могли закрыть аварийно.
+    for (const id of pickAbandonedUploads(uploads, doctorId, now)) {
+      const u = uploads.get(id)!;
+      uploads.delete(id);
+      dropToneTask(u.toneId);
+      logInfo('[STT File] start: прошлая загрузка врача снята как брошенная');
+    }
     const hasActive = startingDoctors.has(doctorId) ||
-      [...uploads.values()].some(u => u.doctorId === doctorId && !u.finished &&
-        (u.inFlight || now - u.lastSeenAt <= UPLOAD_IDLE_TTL_MS));
+      [...uploads.values()].some(u => u.doctorId === doctorId && !u.finished);
     if (hasActive) {
       return res.status(409).json({
-        error: 'Уже идёт загрузка другого файла — дождитесь её или отмените', code: 'upload_active',
+        error: UPLOAD_ACTIVE_MESSAGE, code: 'upload_active',
       });
     }
     startingDoctors.add(doctorId);
