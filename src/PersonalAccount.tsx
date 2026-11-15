@@ -696,10 +696,18 @@ export default function PersonalAccount() {
                                   <h3 className="text-[15px] font-semibold text-ds-900 line-clamp-1 flex-1">
                                     {draftTitle(content)}
                                   </h3>
+                                  {content?.audioSource === 'file' && (
+                                    <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-primary-50 text-primary-700">
+                                      Из файла
+                                    </span>
+                                  )}
                                   <span className={`shrink-0 text-[9px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${protocolReady ? 'bg-success-50 text-success-700' : 'bg-warning-50 text-warning-700'}`}>
                                     {protocolReady ? 'Готов' : 'Черновик'}
                                   </span>
                                 </div>
+                                {content?.audioSource === 'file' && /^\d{4}-\d{2}-\d{2}$/.test(content?.visitDate ?? '') && (
+                                  <p className="text-[11px] text-ds-600 mb-0.5">Дата приёма: {content.visitDate.split('-').reverse().join('.')}</p>
+                                )}
                                 <p className="text-[13px] text-ds-600 line-clamp-1">{content?.complaints || (content?.transcript ? 'Есть стенограмма' : 'Данные не заполнены')}</p>
                                 {content?.communicationReview?.notes?.length > 0 && (
                                   <div className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-primary-700">

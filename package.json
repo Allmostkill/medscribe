@@ -3,7 +3,7 @@
   "description": "Self-hosted голосовой ассистент врача: запись приёма, локальная расшифровка (T-one), черновик протокола через OpenAI-совместимую модель",
   "private": true,
   "license": "AGPL-3.0-or-later",
-  "version": "0.2.3",
+  "version": "0.2.4-rc.1",
   "type": "module",
   "repository": {
     "type": "git",
@@ -23,7 +23,7 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "reset-password": "tsx scripts/reset-password.ts",
-    "check": "tsx scripts/check-audio-persist.ts && tsx scripts/check-communication.ts && tsx scripts/check-note-check.ts && tsx scripts/check-diarization.ts && tsx scripts/check-layout-contract.ts && tsx scripts/check-deidentify.ts && tsx scripts/check-llm.ts && tsx scripts/check-llm-settings-rules.ts && tsx scripts/check-llm-form.ts && tsx scripts/check-review-fixes.ts && tsx scripts/check-finish-flow.ts && tsx scripts/check-stt-engine.ts && tsx scripts/check-mic-constraints.ts && tsx scripts/check-db-client.ts && npm run check:calculators && npm run check:routes",
+    "check": "tsx scripts/check-audio-persist.ts && tsx scripts/check-file-import.ts && tsx scripts/check-communication.ts && tsx scripts/check-note-check.ts && tsx scripts/check-diarization.ts && tsx scripts/check-layout-contract.ts && tsx scripts/check-deidentify.ts && tsx scripts/check-llm.ts && tsx scripts/check-llm-settings-rules.ts && tsx scripts/check-llm-form.ts && tsx scripts/check-review-fixes.ts && tsx scripts/check-finish-flow.ts && tsx scripts/check-stt-engine.ts && tsx scripts/check-mic-constraints.ts && tsx scripts/check-db-client.ts && npm run check:calculators && npm run check:routes",
     "check:calculators": "vite-node scripts/check-calculators.ts",
     "check:routes": "node scripts/check-routes.mjs",
     "fetch-guidelines": "tsx scripts/fetch-guidelines.mjs",

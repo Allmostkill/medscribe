@@ -39,6 +39,8 @@ import PharmaBlock from "./components/blocks/PharmaBlock";
 import { COMMUNICATION_REVIEW_KEY } from "./components/CommunicationNotes";
 import TranscriptBlock from "./components/blocks/TranscriptBlock";
 import TranscribeStatusCard from "./components/TranscribeStatusCard";
+import FileImportCard, { type FileImportRequest } from "./components/FileImportCard";
+import { importAudioFile } from "./services/fileImport";
 import ChecklistBlock from "./components/blocks/ChecklistBlock";
 import CustomWidgetBlock from "./components/blocks/CustomWidgetBlock";
 import ReferenceBlock from "./components/blocks/ReferenceBlock";
@@ -588,6 +590,11 @@ export default function Dashboard() {
   const mountedRef = useRef(true);
   // Идущая расшифровка записи из браузерного буфера (стенограф / «Расшифровать»).
   const transcribeRunRef = useRef<AbortController | null>(null);
+  // Приём из загруженного файла: дата приёма и флаг «Это был звонок». null — приём не из файла.
+  // Не трогает recordingMode живой записи; сбрасывается на новом приёме (resetAppointmentState).
+  const fileAppointmentRef = useRef<{ visitDate: string | null; wasCall: boolean } | null>(null);
+  // Идёт загрузка файла на сервер и подготовка записи: до появления сессии кнопки старта неактивны.
+  const [fileImporting, setFileImporting] = useState(false);
   // Приём, к которому относится останавливаемая запись стенографа, если «Новый приём» уже поднял appointmentGenRef.
   const stopBufferedGenRef = useRef<number | null>(null);
   useEffect(() => {
@@ -784,6 +791,7 @@ export default function Dashboard() {
     priorContextUsedRef.current = false;
     setProtocolWithPrior(false);
     draftRef.current = null;
+    fileAppointmentRef.current = null;
     setCurrentDraftId(null);
     setDraftEditState('idle');
     draftEditSeqRef.current++; // результат уже идущего автосохранения устарел
@@ -818,6 +826,7 @@ export default function Dashboard() {
     setPatientSummary(null);
     setMemoSourceEhr(null);
     draftRef.current = null;
+    fileAppointmentRef.current = null;
     setCurrentDraftId(null);
     setDraftEditState('idle');
     draftEditSeqRef.current++; // результат уже идущего автосохранения устарел
@@ -1076,7 +1085,7 @@ export default function Dashboard() {
         usedGuideline,
         usedType,
         template,
-        recordingMode === 'system',
+        recordingMode === 'system' || !!fileAppointmentRef.current?.wasCall,
         usedPrior,
         voiceLabelledRef.current,
       );
@@ -1125,6 +1134,12 @@ export default function Dashboard() {
     // Новый приём, как при старте записи: иначе текст лёг бы в приём прошлого пациента.
     // Строку из unfinishedSessions не удаляем: пока идёт расшифровка она спрятана, при сбое остаётся.
     resetAppointmentState();
+    // Запись из загруженного файла: черновик пометим источником.
+    // Дату приёма и флаг звонка берём из сессии; у прежних сессий их нет.
+    const fileMeta = unfinishedSessions.find(s => s.sessionId === sessionId);
+    if (fileMeta?.source === 'file') {
+      fileAppointmentRef.current = { visitDate: fileMeta.visitDate ?? null, wasCall: !!fileMeta.wasCall };
+    }
     // Контекст «Из МИС» относится к прошлому пациенту: врач вставляет его до записи, а здесь записи ещё нет.
     const hadContext = priorContextRef.current !== '';
     clearPriorContext();
@@ -1133,6 +1148,52 @@ export default function Dashboard() {
       setTimeout(() => setAiError(null), 8000);
     }
     await runBufferedTranscription(sessionId, { diarize: false });
+  };
+
+  /** Загрузить аудиофайл приёма на сервер, положить в буфер как сессию и расшифровать как обычную запись. */
+  const startFileImport = async (file: File, req: FileImportRequest) => {
+    if (startBlocked || bufferedRef.current) throw new Error('Дождитесь окончания текущей расшифровки');
+    const doctorId = doctorKeyRef.current?.id ?? getStoredSession()?.doctor?.id;
+    if (!doctorId) throw new Error('Не удалось определить врача: войдите заново');
+    // Новый приём, как при старте записи.
+    resetAppointmentState();
+    markPriorContextUsedOnStart(true);
+    const gen = appointmentGenRef.current;
+    // Тип приёма из панели действует и на протокол (analyze читает ref).
+    consultationTypeRef.current = req.consultationType;
+    setConsultationType(req.consultationType);
+    fileAppointmentRef.current = { visitDate: req.visitDate, wasCall: req.wasCall };
+    setFileImporting(true);
+    let sessionId: string;
+    try {
+      ({ sessionId } = await importAudioFile(file, {
+        consultationType: req.consultationType,
+        doctorId,
+        visitDate: req.visitDate,
+        wasCall: req.wasCall,
+        signal: req.signal,
+        onProgress: req.onProgress,
+      }));
+    } catch (err) {
+      priorContextUsedRef.current = false;   // приём не начался: контекст ещё ничей
+      if (appointmentGenRef.current === gen) fileAppointmentRef.current = null;
+      if (mountedRef.current) setFileImporting(false);
+      throw err;
+    }
+    // Врач успел отменить, уйти или начать другой приём: запись в буфер не нужна / остаётся в «Незавершённых».
+    if (req.signal.aborted) {
+      deleteSession(sessionId).catch(() => {});
+      if (appointmentGenRef.current === gen) fileAppointmentRef.current = null;
+      if (mountedRef.current) setFileImporting(false);
+      return;
+    }
+    if (!mountedRef.current || appointmentGenRef.current !== gen) {
+      if (mountedRef.current) { setFileImporting(false); await refreshUnfinished(); }
+      return;
+    }
+    setFileImporting(false);
+    // Не ждём: дальше ход показывает карточка расшифровки.
+    void runBufferedTranscription(sessionId, { diarize: true, gen });
   };
 
   const dismissUnfinishedSession = async (sessionId: string) => {
@@ -1388,6 +1449,8 @@ export default function Dashboard() {
         // Старт с пустого экрана — новый приём: фоновое уточнение прошлой записи без текста
         // не должно подменить стенограмму этого (оно отбросится по appointmentGenRef, звук останется в браузере).
         appointmentGenRef.current++;
+        // Метки файла прошлого приёма (звонок, дата) не должны достаться следующему пациенту.
+        fileAppointmentRef.current = null;
         if (refineRef.current?.finishRequested) refineRef.current.controller.abort();
         refineRef.current = null;
       } else {
@@ -1646,6 +1709,11 @@ export default function Dashboard() {
     const content = {
       ...(ehr || { complaints: '', anamnesisMorbi: '', anamnesisVitae: '', allergies: '', examination: '', diagnoses: '(не сформировано)', medications: '', plan: '' }),
       ...(memo ? { patientSummary: memo } : {}),
+      // Приём из файла: источник и дата приёма (имя файла не сохраняем).
+      ...(fileAppointmentRef.current ? {
+        audioSource: 'file',
+        ...(fileAppointmentRef.current.visitDate ? { visitDate: fileAppointmentRef.current.visitDate } : {}),
+      } : {}),
     };
 
     const res = await fetch("/api/drafts", {
@@ -1795,7 +1863,8 @@ export default function Dashboard() {
     // Флаг дистанционного приёма запоминается на повторные сверки.
     // Запись звука вкладки (recordingMode === 'system') и есть онлайн-приём.
     // Берём до первого await: дальше врач мог что-то переключить.
-    const wasRemote = recordingMode === 'system';
+    // Файл с пометкой «Это был звонок» — тоже дистанционный приём.
+    const wasRemote = recordingMode === 'system' || !!fileAppointmentRef.current?.wasCall;
 
     // Живая стенограмма не размечена по голосам. Если запись ещё идёт (врач не
     // нажимал «Стоп») или уточнение после «Стоп» не закончилось — расшифровываем
@@ -2040,7 +2109,7 @@ export default function Dashboard() {
   };
 
   // Пока собирается протокол, новую запись начинать нельзя: стенограммы двух пациентов смешались бы.
-  const startBlocked = !isRecording && (finishStage !== null || isGeneratingEHR || !!transcriptionProgress);
+  const startBlocked = !isRecording && (finishStage !== null || isGeneratingEHR || !!transcriptionProgress || fileImporting);
 
   // Строку, которую сейчас расшифровывают, прячем: при сбое она вернётся в плашку.
   const unfinishedVisible = unfinishedSessions.filter(
@@ -2313,7 +2382,7 @@ export default function Dashboard() {
                           {new Date(s.startedAt).toLocaleString('ru-RU')}
                         </div>
                         <div className="text-[11px] text-ds-600">
-                          {formatSessionDuration(s.durationMs)} · {s.consultationType === 'primary' ? 'Первичный' : 'Повторный'}
+                          {formatSessionDuration(s.durationMs)} · {s.consultationType === 'primary' ? 'Первичный' : 'Повторный'}{s.source === 'file' ? ' · Из файла' : ''}
                         </div>
                         {s.status === 'recording' && (
                           <div className="text-[11px] text-ds-600">
@@ -2481,6 +2550,14 @@ export default function Dashboard() {
                   Записать звонок
                 </button>
               </div>
+
+              {/* Запись из файла */}
+              <FileImportCard
+                blocked={startBlocked && !fileImporting}
+                consultationType={consultationType}
+                priorContextLength={priorContext.trim().length}
+                onImport={startFileImport}
+              />
 
             </div>
 

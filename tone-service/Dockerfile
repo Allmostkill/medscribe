@@ -22,7 +22,7 @@ COPY fetch_diar_models.py ./
 ARG DIAR_MODELS_BASE=https://github.com/k2-fsa/sherpa-onnx/releases/download
 RUN python fetch_diar_models.py --out /opt/diar --base "$DIAR_MODELS_BASE"
 
-COPY diarize.py gigaam.py audio_level.py app.py ./
+COPY diarize.py gigaam.py audio_level.py split.py app.py ./
 
 # падаем при сборке, если разметка не заводится (один процесс — как в сервисе)
 RUN python -c "import onnxruntime, tone, diarize, numpy; diarize.run(diarize.load('/opt/diar', diarize.DEFAULT_THRESHOLD), numpy.zeros(48000, dtype='float32'))"

@@ -200,6 +200,10 @@ try {
     await expectStatus(`13 ${m} ${u} без токена`, 401, m, u, withBody(m));
   }
   await expectStatus('13 POST /api/stt/full без токена', 401, 'POST', '/api/stt/full', { raw: Buffer.from('x') });
+  await expectStatus('13 POST /api/stt/file/start без токена', 401, 'POST', '/api/stt/file/start');
+  await expectStatus('13 POST /api/stt/file/x/part без токена', 401, 'POST', '/api/stt/file/x/part?seq=0', { raw: Buffer.from('x') });
+  await expectStatus('13 POST /api/stt/file/x/finish без токена', 401, 'POST', '/api/stt/file/x/finish');
+  await expectStatus('13 DELETE /api/stt/file/x без токена', 401, 'DELETE', '/api/stt/file/x');
   // Клиент базы повторяет запрос при сетевой ошибке (около 7 с на попытку), поэтому
   // эти случаи идут параллельно.
   await Promise.all([

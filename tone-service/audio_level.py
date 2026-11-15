@@ -33,7 +33,7 @@ def ffmpeg_decode_cmd(src: str, wav: str, max_sec, leveler: bool = True) -> list
     каналы), а приведение к 16 кГц моно вставляет уже после цепочки фильтров."""
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error",
            "-protocol_whitelist", "file,pipe",
-           "-format_whitelist", "mov,mp4,m4a,3gp,matroska,webm,ogg,wav,mp3",
+           "-format_whitelist", "mov,mp4,m4a,3gp,matroska,webm,ogg,wav,mp3,flac,amr,aac",  # как split.FORMAT_WHITELIST
            "-i", src, "-t", str(max_sec)]
     if leveler:
         cmd += ["-af", LEVELER_FILTER]

@@ -34,6 +34,11 @@ export interface SessionMeta {
   status: 'recording' | 'completed' | 'transcribed';
   consultationType?: 'primary' | 'follow-up';
   doctorId?: string;
+  /** 'file' — загруженный файл, а не запись с микрофона. */
+  source?: 'file';
+  /** Для загруженного файла: дата приёма (ГГГГ-ММ-ДД) и «это был звонок»; у прежних сессий нет. */
+  visitDate?: string;
+  wasCall?: boolean;
   /** Последнее обновление строки (сброс кусочка или смена статуса); нет у записей прежней версии. */
   updatedAt?: number;
 }
@@ -183,6 +188,38 @@ export async function updateSession(sessionId: string, patch: Partial<SessionMet
     if (!existing) return;
     store.put({ ...existing, ...patch, updatedAt: Date.now() });
   });
+}
+
+/**
+ * Загруженный файл как готовая сессия: строка 'completed' и по одному кусочку на часть записи
+ * одной транзакцией — либо есть всё, либо ничего. Web Lock у такой сессии нет, поэтому
+ * listUnfinishedSessions видит её как завершённую, а purgeOld чистит по сроку.
+ */
+export async function importSession(
+  meta: { consultationType?: 'primary' | 'follow-up'; doctorId?: string; durationMs: number; source: 'file';
+    visitDate?: string; wasCall?: boolean },
+  segs: { blob: Blob; durationMs: number }[],
+): Promise<string> {
+  // ArrayBuffer готовим до транзакции: чужой await закрыл бы её.
+  const buffers = await Promise.all(segs.map(s => s.blob.arrayBuffer()));
+  const sessionId = makeSessionId();
+  const now = Date.now();
+  await tx([STORE_SESSIONS, STORE_CHUNKS], 'readwrite', t => {
+    const chunks = t.objectStore(STORE_CHUNKS);
+    segs.forEach((s, i) => {
+      chunks.put({
+        sessionId, segmentIdx: i, seq: 0, data: buffers[i], mimeType: 'audio/ogg',
+        segmentMs: s.durationMs, recordedAt: now,
+      } satisfies ChunkRecord);
+    });
+    t.objectStore(STORE_SESSIONS).put({
+      sessionId, startedAt: now, durationMs: meta.durationMs, segmentCount: segs.length,
+      status: 'completed', source: meta.source,
+      ...(meta.visitDate ? { visitDate: meta.visitDate } : {}), ...(meta.wasCall ? { wasCall: true } : {}),
+      consultationType: meta.consultationType, doctorId: meta.doctorId, updatedAt: now,
+    } satisfies SessionMeta);
+  }, 'strict');
+  return sessionId;
 }
 
 /**

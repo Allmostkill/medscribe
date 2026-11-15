@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 import gigaam
+import split
 from audio_level import ffmpeg_decode_cmd, leveler_enabled, normalize_gain
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [tone] %(message)s")
@@ -313,6 +314,73 @@ async def transcribe(request: Request) -> dict:
             return _transcribe_file(raw, engine, fallback)
 
     return await run_in_threadpool(locked)
+
+
+# ─── Нарезка длинной записи (/split) ────────────────────────────────────────
+# Приложение (единственный клиент, внутренняя сеть) шлёт исходник частями, потом /finish.
+# ffmpeg здесь не берёт _infer_lock: это другой ресурс, распознаванию не мешает.
+split_mgr = split.Manager()
+
+
+@app.on_event("startup")
+def _start_split_reaper() -> None:
+    threading.Thread(target=split_mgr.reaper_loop, daemon=True).start()
+
+
+def _split_error(e: "split.SplitError") -> JSONResponse:
+    return JSONResponse(status_code=e.status, content={"code": e.code, **e.extra})
+
+
+def _split_call(fn):
+    try:
+        return fn()
+    except split.SplitError as e:
+        return _split_error(e)
+
+
+@app.post("/split")
+async def split_create():
+    return await run_in_threadpool(lambda: _split_call(lambda: {"id": split_mgr.create()}))
+
+
+@app.post("/split/{tid}/part")
+async def split_part(tid: str, seq: int, request: Request):
+    try:
+        clen = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        return JSONResponse(status_code=400, content={"code": "bad_request"})
+    # Порядок, занятость и размер проверяются ДО чтения тела
+    try:
+        task = await run_in_threadpool(split_mgr.begin_part, tid, seq, clen)
+    except split.SplitError as e:
+        return _split_error(e)
+    try:
+        buf = bytearray()
+        async for chunk in request.stream():  # chunked без Content-Length тоже ограничен
+            buf += chunk
+            if len(buf) > split.MAX_PART_BYTES:
+                await run_in_threadpool(split_mgr.drop, tid)
+                return JSONResponse(status_code=413, content={"code": "too_big"})
+        data = bytes(buf)
+
+        def work():
+            split_mgr.run(tid, lambda t: t.add_part(seq, data))
+            return {"ok": True}
+
+        return await run_in_threadpool(lambda: _split_call(work))
+    finally:
+        split_mgr.end_part(task)
+
+
+@app.post("/split/{tid}/finish")
+async def split_finish(tid: str):
+    return await run_in_threadpool(lambda: _split_call(lambda: split_mgr.finish(tid)))
+
+
+@app.delete("/split/{tid}")
+async def split_cancel(tid: str) -> dict:
+    await run_in_threadpool(split_mgr.drop, tid)
+    return {"ok": True}
 
 
 # ─── Потоковый режим (real-time стенограмма) ─────────────────────────────────

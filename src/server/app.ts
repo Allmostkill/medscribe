@@ -15,6 +15,7 @@ import { registerGuidelinesRoutes } from "./routes/guidelines";
 import { registerWorkspaceRoutes } from "./routes/workspace";
 import { registerAiRoutes } from "./routes/ai";
 import { registerSttRoutes } from "./routes/stt";
+import { registerSttFileRoutes } from "./routes/sttFile";
 
 export async function createApp() {
   const app = express();
@@ -47,6 +48,7 @@ export async function createApp() {
   registerWorkspaceRoutes(app);
   registerAiRoutes(app);
   registerSttRoutes(app);
+  registerSttFileRoutes(app);
 
   // 404 for unknown /api/* routes — must come BEFORE the SPA fallback, otherwise
   // an unknown API path returns index.html and the client sees a JSON parse error.

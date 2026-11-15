@@ -153,11 +153,11 @@ services:
       - default
     volumes:
       - tone-models:/models
-    # временные wav расшифровки живут в памяти: после аварии контейнера звук не остаётся на диске.
-    # Запас под исходный файл и два wav по 25 мин (16 кГц PCM16 ≈ 48 МБ каждый); модели и веса
-    # GigaAM лежат в томе /models (HF_HOME), в /tmp ничего постоянного нет
+    # /tmp — оперативная память: временные wav расшифровки, загруженный m4a/mp4 до 300 МБ и нарезанные части (ogg ~35 МБ на 2 ч).
+    # Одновременно не больше 2 задач нарезки. Модели и веса GigaAM лежат в томе /models (HF_HOME), в /tmp ничего постоянного нет;
+    # после аварии контейнера звук приёма не остаётся на диске.
     tmpfs:
-      - /tmp:size=256m
+      - /tmp:size=512m
     healthcheck:
       test: ["CMD", "python", "-c", "import json,sys,urllib.request; sys.exit(0 if json.load(urllib.request.urlopen('http://127.0.0.1:5001/health', timeout=5)).get('ok') is True else 1)"]
       interval: 30s
