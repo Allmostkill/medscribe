@@ -1,0 +1,33 @@
+# T-one STT микросервис. Python 3.11–3.12.
+#
+# ВАЖНО: официальный T-one НЕ публикуется на PyPI. Пакет `tone` на PyPI —
+# посторонний однофамилец. Ставим из официального репозитория, закреплённого
+# на коммите. Он тянет onnxruntime (CPU), kenlm (собирается из исходников),
+# numpy, huggingface-hub и т.д. Torch НЕ нужен — инференс на ONNX Runtime.
+tone @ git+https://github.com/voicekit-team/T-one.git@3c5b6c015038173840e62cea99e10cdb1c759116
+
+# read_audio (tone.demo.read_audio) декодит wav через miniaudio — он в demo-extras
+# T-one и НЕ ставится basic-инсталлом. Без него /transcribe падает с
+# ModuleNotFoundError: Package 'miniaudio' not found. soundfile оставлен запасным.
+miniaudio==1.71
+soundfile==0.14.0
+
+# numpy — потоковый /stream сам режет PCM на чанки по 2400 семплов (раньше numpy
+# тянулся транзитивно через tone, теперь импортим напрямую).
+numpy==1.26.4
+
+# HTTP-обвязка сервиса. uvicorn[standard] тянет websockets — нужно для FastAPI
+# WebSocket (/stream, real-time стенограмма T-one).
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+
+# Разметка по голосу (диаризация): ONNX Runtime внутри колеса, модели — в образе
+# (см. fetch_diar_models.py). Apache-2.0.
+sherpa-onnx==1.13.8
+
+# GigaAM v3 (Сбер, MIT) — второй движок итоговой расшифровки. onnx-asr: только numpy +
+# onnxruntime, без torch; веса не в образе, качаются по команде врача (gigaam.py).
+# onnxruntime закреплён той версией, что и так ставилась в образ (она проходит
+# исключения onnx-asr: !=1.24.1, !=1.25.*, !=1.26.0).
+onnx-asr==0.12.0
+onnxruntime==1.31.1
